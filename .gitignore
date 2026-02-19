@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+
+# Env
+.env
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Data / indexes
+backend/data/
+backend/vector_store/
+
+# Node
+node_modules/
+dist/
+.vite/
+frontend/.env
