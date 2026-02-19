@@ -163,106 +163,176 @@ st.set_page_config(page_title="B.Tech Multimodal Study RAG Assistant", layout="w
 settings = _ensure_ready()
 
 st.title("B.Tech Multimodal Study RAG Assistant")
+st.caption("Multimodal RAG for B.Tech: PDFs, notes, handwritten/diagrams + exam-style answers.")
 
 api_key = _get_api_key()
 if not api_key:
     st.error(
-        "GEMINI_API_KEY not set. On Streamlit Cloud: Settings → Secrets → add GEMINI_API_KEY.\n"
+        "GEMINI_API_KEY not set. On Streamlit Cloud: App → Settings → Secrets → add GEMINI_API_KEY. "
         "Locally you can set an environment variable GEMINI_API_KEY."
     )
     st.stop()
 
-with st.sidebar:
-    st.header("Study Context")
-    subject = st.text_input("Subject", value="Electrical Networks")
-    unit = st.text_input("Unit (optional)", value="")
-    topic = st.text_input("Topic (optional)", value="")
+if "history" not in st.session_state:
+    st.session_state.history = []
+if "last_ingest" not in st.session_state:
+    st.session_state.last_ingest = {"type": None, "added": 0, "source": None}
 
-    st.caption("Existing subjects in DB")
+with st.sidebar:
+    st.header("Workspace")
+
+    with st.form("context_form", clear_on_submit=False):
+        subject = st.text_input("Subject", value=st.session_state.get("subject", "Electrical Networks"))
+        unit = st.text_input("Unit", value=st.session_state.get("unit", ""), help="Optional")
+        topic = st.text_input("Topic", value=st.session_state.get("topic", ""), help="Optional")
+
+        mode = st.selectbox(
+            "Answer mode",
+            options=["short", "5_mark", "10_mark", "detailed", "numerical"],
+            index=["short", "5_mark", "10_mark", "detailed", "numerical"].index(st.session_state.get("mode", "5_mark")),
+        )
+        top_k = st.slider("Top-K context chunks", min_value=2, max_value=12, value=int(st.session_state.get("top_k", 6)))
+
+        submitted = st.form_submit_button("Apply")
+        if submitted:
+            st.session_state.subject = subject
+            st.session_state.unit = unit
+            st.session_state.topic = topic
+            st.session_state.mode = mode
+            st.session_state.top_k = top_k
+
+    st.divider()
+    c1, c2 = st.columns(2)
+    with c1:
+        st.metric("Model", settings.gemini_model)
+    with c2:
+        st.metric("Embed", settings.gemini_embedding_model)
+
+    st.caption("Known subjects")
     try:
         st.write(list_subjects(settings))
     except Exception:
         st.write([])
 
-    st.divider()
-    st.header("Answer Mode")
-    mode = st.selectbox("Mode", options=["short", "5_mark", "10_mark", "detailed", "numerical"], index=1)
-
-col_ingest, col_chat = st.columns([0.45, 0.55])
-
-with col_ingest:
-    st.subheader("Ingest")
-
-    with st.expander("Typed notes", expanded=True):
-        notes_source = st.text_input("Source name", value="typed-notes")
-        notes_text = st.text_area("Paste notes", height=160)
-        if st.button("Ingest notes"):
-            added = ingest_notes(
-                settings=settings,
-                subject=subject,
-                unit=unit or None,
-                topic=topic or None,
-                source_name=notes_source,
-                text=notes_text,
-            )
-            st.success(f"Added {added} chunks")
-
-    with st.expander("PDF", expanded=True):
-        pdf_file = st.file_uploader("Upload PDF", type=["pdf"], accept_multiple_files=False)
-        if pdf_file and st.button("Ingest PDF"):
-            added = ingest_pdf(
-                settings=settings,
-                subject=subject,
-                unit=unit or None,
-                topic=topic or None,
-                filename=pdf_file.name,
-                pdf_bytes=pdf_file.getvalue(),
-            )
-            st.success(f"Added {added} chunks")
-
-    with st.expander("Handwritten / Diagram image", expanded=False):
-        kind = st.selectbox("Kind", options=["handwritten", "diagram"], index=0)
-        img_file = st.file_uploader("Upload image", type=["png", "jpg", "jpeg"], accept_multiple_files=False)
-        if img_file and st.button("Ingest image"):
-            mime = img_file.type or "image/png"
-            added = ingest_image(
-                settings=settings,
-                subject=subject,
-                unit=unit or None,
-                topic=topic or None,
-                filename=img_file.name,
-                mime=mime,
-                img_bytes=img_file.getvalue(),
-                kind=kind,
-            )
-            st.success(f"Added {added} chunks")
-
-with col_chat:
-    st.subheader("Ask")
-
-    if "history" not in st.session_state:
+    st.caption("Session")
+    if st.button("Clear chat"):
         st.session_state.history = []
+        st.rerun()
 
+
+tab_chat, tab_ingest = st.tabs(["Chat", "Ingest"])
+
+with tab_chat:
+    st.subheader("Ask a doubt")
+    st.caption("If you ingest notes/PDFs, answers will include citations.")
+
+    # Render existing chat
     for role, msg in st.session_state.history:
         with st.chat_message(role):
             st.markdown(msg)
 
-    user_q = st.chat_input("Ask a question…")
+    user_q = st.chat_input("Ask your question…")
     if user_q:
         st.session_state.history.append(("user", user_q))
 
         with st.chat_message("assistant"):
-            with st.spinner("Thinking…"):
+            status = st.status("Retrieving + generating…", expanded=False)
+            try:
                 answer, chunks = answer_question(
                     settings=settings,
-                    subject=subject,
+                    subject=st.session_state.get("subject", subject),
                     question=user_q,
-                    mode=mode,
-                    top_k=6,
+                    mode=st.session_state.get("mode", mode),
+                    top_k=int(st.session_state.get("top_k", top_k)),
                 )
-                st.markdown(answer)
-                if chunks:
-                    st.caption("Sources")
+                status.update(label="Done", state="complete")
+            except Exception as e:
+                status.update(label="Failed", state="error")
+                raise e
+
+            st.markdown(answer)
+            if chunks:
+                with st.expander("Sources used", expanded=False):
                     st.json(chunks)
 
         st.session_state.history.append(("assistant", answer))
+
+
+with tab_ingest:
+    st.subheader("Build your subject knowledge base")
+    st.caption("Upload notes/PDFs/images so answers can reference your material.")
+
+    subject_live = st.session_state.get("subject", subject)
+    unit_live = st.session_state.get("unit", unit) or ""
+    topic_live = st.session_state.get("topic", topic) or ""
+
+    left, mid, right = st.columns(3)
+
+    with left:
+        st.markdown("#### Typed notes")
+        with st.form("ingest_notes_form"):
+            notes_source = st.text_input("Source name", value="typed-notes")
+            notes_text = st.text_area("Paste notes", height=180)
+            do_notes = st.form_submit_button("Ingest notes")
+        if do_notes:
+            with st.status("Embedding notes…", expanded=False) as s:
+                added = ingest_notes(
+                    settings=settings,
+                    subject=subject_live,
+                    unit=unit_live or None,
+                    topic=topic_live or None,
+                    source_name=notes_source,
+                    text=notes_text,
+                )
+                st.session_state.last_ingest = {"type": "notes", "added": added, "source": notes_source}
+                s.update(label=f"Notes ingested ({added} chunks)", state="complete")
+
+    with mid:
+        st.markdown("#### PDF")
+        pdf_file = st.file_uploader("Upload PDF", type=["pdf"], accept_multiple_files=False, key="pdf_uploader")
+        if pdf_file is not None:
+            st.caption(f"Selected: {pdf_file.name}")
+        if pdf_file and st.button("Ingest PDF", use_container_width=True):
+            with st.status("Extracting + embedding PDF…", expanded=False) as s:
+                added = ingest_pdf(
+                    settings=settings,
+                    subject=subject_live,
+                    unit=unit_live or None,
+                    topic=topic_live or None,
+                    filename=pdf_file.name,
+                    pdf_bytes=pdf_file.getvalue(),
+                )
+                st.session_state.last_ingest = {"type": "pdf", "added": added, "source": pdf_file.name}
+                s.update(label=f"PDF ingested ({added} chunks)", state="complete")
+
+    with right:
+        st.markdown("#### Image (handwritten/diagram)")
+        kind = st.selectbox("Kind", options=["handwritten", "diagram"], index=0, key="img_kind")
+        img_file = st.file_uploader(
+            "Upload image",
+            type=["png", "jpg", "jpeg"],
+            accept_multiple_files=False,
+            key="img_uploader",
+        )
+        if img_file is not None:
+            st.image(img_file, use_container_width=True)
+        if img_file and st.button("Ingest image", use_container_width=True):
+            with st.status("Extracting text + embedding image…", expanded=False) as s:
+                mime = img_file.type or "image/png"
+                added = ingest_image(
+                    settings=settings,
+                    subject=subject_live,
+                    unit=unit_live or None,
+                    topic=topic_live or None,
+                    filename=img_file.name,
+                    mime=mime,
+                    img_bytes=img_file.getvalue(),
+                    kind=kind,
+                )
+                st.session_state.last_ingest = {"type": kind, "added": added, "source": img_file.name}
+                s.update(label=f"Image ingested ({added} chunks)", state="complete")
+
+    st.divider()
+    last = st.session_state.get("last_ingest") or {}
+    if last.get("type"):
+        st.info(f"Last ingest: type={last.get('type')} source={last.get('source')} chunks_added={last.get('added')}")
