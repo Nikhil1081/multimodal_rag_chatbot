@@ -22,6 +22,168 @@ from app.pdf_processor import extract_pdf_text_by_page  # noqa: E402
 from app.rag_pipeline import answer_question  # noqa: E402
 
 
+def _inject_tech_theme() -> None:
+        st.markdown(
+                """
+<style>
+    /* --- Tech theme (CSS injection) --- */
+    :root {
+        --bg0: #070b14;
+        --bg1: #0b1220;
+        --panel: rgba(17, 27, 46, 0.72);
+        --panel2: rgba(17, 27, 46, 0.9);
+        --stroke: rgba(34, 211, 238, 0.18);
+        --stroke2: rgba(167, 139, 250, 0.18);
+        --text: #e5e7eb;
+        --muted: rgba(229, 231, 235, 0.72);
+        --accent: #22d3ee;
+        --accent2: #a78bfa;
+        --good: #34d399;
+        --warn: #fbbf24;
+    }
+
+    .stApp {
+        background:
+            radial-gradient(1200px 600px at 15% 0%, rgba(34, 211, 238, 0.18), transparent 60%),
+            radial-gradient(1000px 600px at 85% 10%, rgba(167, 139, 250, 0.18), transparent 55%),
+            linear-gradient(180deg, var(--bg0), var(--bg1));
+        color: var(--text);
+    }
+
+    /* Subtle animated grid */
+    .stApp:before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        background-image:
+            linear-gradient(to right, rgba(34, 211, 238, 0.08) 1px, transparent 1px),
+            linear-gradient(to bottom, rgba(167, 139, 250, 0.06) 1px, transparent 1px);
+        background-size: 48px 48px;
+        mask-image: radial-gradient(closest-side at 50% 10%, rgba(0,0,0,0.9), transparent 85%);
+        opacity: 0.55;
+        animation: gridShift 18s linear infinite;
+    }
+    @keyframes gridShift {
+        from { transform: translate3d(0, 0, 0); }
+        to { transform: translate3d(-48px, -48px, 0); }
+    }
+
+    /* Glassy blocks */
+    div[data-testid="stVerticalBlock"],
+    section[data-testid="stSidebar"] > div {
+        backdrop-filter: blur(10px);
+    }
+
+    /* Sidebar panel */
+    section[data-testid="stSidebar"] {
+        background: linear-gradient(180deg, rgba(7, 11, 20, 0.6), rgba(11, 18, 32, 0.85));
+        border-right: 1px solid rgba(34, 211, 238, 0.12);
+    }
+
+    /* Main content max width polish */
+    div[data-testid="stAppViewContainer"] > .main {
+        padding-top: 1.0rem;
+    }
+
+    /* Headings */
+    h1, h2, h3 {
+        letter-spacing: 0.2px;
+    }
+
+    /* Buttons */
+    .stButton > button {
+        border: 1px solid rgba(34, 211, 238, 0.25) !important;
+        background: linear-gradient(180deg, rgba(34, 211, 238, 0.18), rgba(167, 139, 250, 0.10)) !important;
+        color: var(--text) !important;
+        border-radius: 12px !important;
+        box-shadow: 0 0 0 1px rgba(34, 211, 238, 0.06), 0 18px 40px rgba(0, 0, 0, 0.35);
+        transition: transform 120ms ease, box-shadow 120ms ease;
+    }
+    .stButton > button:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 0 0 1px rgba(34, 211, 238, 0.12), 0 22px 60px rgba(0, 0, 0, 0.42);
+    }
+
+    /* Inputs */
+    input, textarea {
+        border-radius: 12px !important;
+    }
+    div[data-baseweb="input"] > div,
+    div[data-baseweb="textarea"] > div,
+    div[data-baseweb="select"] > div {
+        background-color: rgba(17, 27, 46, 0.60) !important;
+        border: 1px solid rgba(34, 211, 238, 0.14) !important;
+    }
+
+    /* Tabs */
+    button[role="tab"] {
+        border-radius: 12px 12px 0 0 !important;
+    }
+
+    /* Chat messages */
+    div[data-testid="stChatMessage"] {
+        border: 1px solid rgba(34, 211, 238, 0.10);
+        background: var(--panel);
+        border-radius: 16px;
+        padding: 0.25rem 0.25rem;
+    }
+    div[data-testid="stChatMessage"] a { color: var(--accent) !important; }
+
+    /* Expander */
+    details {
+        border-radius: 14px !important;
+        border: 1px solid rgba(167, 139, 250, 0.12) !important;
+        background: rgba(17, 27, 46, 0.55) !important;
+    }
+
+    /* Captions */
+    .stCaption, small {
+        color: var(--muted) !important;
+    }
+
+    /* Remove some default white seams */
+    header[data-testid="stHeader"] {
+        background: rgba(0,0,0,0) !important;
+    }
+
+    /* Hero card */
+    .hero {
+        border: 1px solid rgba(34, 211, 238, 0.16);
+        background: linear-gradient(180deg, rgba(17, 27, 46, 0.62), rgba(11, 18, 32, 0.20));
+        border-radius: 18px;
+        padding: 18px 18px 12px 18px;
+        box-shadow: 0 24px 70px rgba(0, 0, 0, 0.45);
+    }
+    .heroTitle {
+        margin: 0;
+        font-size: 1.8rem;
+        line-height: 1.15;
+        background: linear-gradient(90deg, var(--accent), var(--accent2));
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+    }
+    .heroSub {
+        margin: 0.35rem 0 0 0;
+        color: var(--muted);
+    }
+    .chip {
+        display: inline-block;
+        padding: 6px 10px;
+        margin-right: 8px;
+        border-radius: 999px;
+        border: 1px solid rgba(34, 211, 238, 0.18);
+        background: rgba(17, 27, 46, 0.55);
+        color: rgba(229, 231, 235, 0.86);
+        font-size: 0.85rem;
+    }
+</style>
+                """,
+                unsafe_allow_html=True,
+        )
+
+
 def _get_api_key() -> str:
     # Prefer Streamlit Cloud secrets, then environment variables.
     try:
@@ -162,8 +324,21 @@ st.set_page_config(page_title="B.Tech Multimodal Study RAG Assistant", layout="w
 
 settings = _ensure_ready()
 
-st.title("B.Tech Multimodal Study RAG Assistant")
-st.caption("Multimodal RAG for B.Tech: PDFs, notes, handwritten/diagrams + exam-style answers.")
+_inject_tech_theme()
+
+st.markdown(
+        """
+<div class="hero">
+    <div class="chip">Multimodal RAG</div>
+    <div class="chip">PDF • Notes • Handwriting • Diagrams</div>
+    <div class="chip">Exam-mode answers</div>
+    <h1 class="heroTitle">B.Tech Multimodal Study Assistant</h1>
+    <p class="heroSub">Upload your material, then ask doubts. If context exists, answers cite sources; otherwise it answers from standard knowledge.</p>
+</div>
+        """,
+        unsafe_allow_html=True,
+)
+st.write("")
 
 api_key = _get_api_key()
 if not api_key:
