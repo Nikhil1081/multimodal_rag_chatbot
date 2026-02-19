@@ -24,8 +24,13 @@ from app.rag_pipeline import answer_question  # noqa: E402
 
 def _get_api_key() -> str:
     # Prefer Streamlit Cloud secrets, then environment variables.
-    if "GEMINI_API_KEY" in st.secrets:
-        return str(st.secrets["GEMINI_API_KEY"]).strip()
+    try:
+        # On Streamlit (especially local runs), st.secrets may raise
+        # StreamlitSecretNotFoundError if no secrets file exists.
+        if "GEMINI_API_KEY" in st.secrets:
+            return str(st.secrets["GEMINI_API_KEY"]).strip()
+    except Exception:
+        pass
     return (os.getenv("GEMINI_API_KEY") or "").strip()
 
 
@@ -36,10 +41,13 @@ def _ensure_ready():
     settings.gemini_api_key = api_key
 
     # Allow overriding models from Streamlit secrets.
-    if "GEMINI_MODEL" in st.secrets:
-        settings.gemini_model = str(st.secrets["GEMINI_MODEL"]).strip()
-    if "GEMINI_EMBEDDING_MODEL" in st.secrets:
-        settings.gemini_embedding_model = str(st.secrets["GEMINI_EMBEDDING_MODEL"]).strip()
+    try:
+        if "GEMINI_MODEL" in st.secrets:
+            settings.gemini_model = str(st.secrets["GEMINI_MODEL"]).strip()
+        if "GEMINI_EMBEDDING_MODEL" in st.secrets:
+            settings.gemini_embedding_model = str(st.secrets["GEMINI_EMBEDDING_MODEL"]).strip()
+    except Exception:
+        pass
 
     settings.data_path().mkdir(parents=True, exist_ok=True)
     init_db(settings)
