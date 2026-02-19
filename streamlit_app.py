@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 import os
+import secrets
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
+import sqlite3
 from typing import Optional
 
 import streamlit as st
@@ -23,8 +28,8 @@ from app.rag_pipeline import answer_question  # noqa: E402
 
 
 def _inject_tech_theme() -> None:
-        st.markdown(
-                """
+    st.markdown(
+    """
 <style>
     /* --- Tech theme (CSS injection) --- */
     :root {
@@ -228,64 +233,289 @@ def _inject_tech_theme() -> None:
         margin: 0.35rem 0 0 0;
         color: var(--muted);
     }
+
+    /* Auth tabs look more app-like */
+    div[data-testid="stTabs"] button[role="tab"] {
+        border: 1px solid rgba(34, 211, 238, 0.12) !important;
+        background: rgba(17, 27, 46, 0.35) !important;
+        margin-right: 0.35rem;
+    }
+    div[data-testid="stTabs"] button[role="tab"][aria-selected="true"] {
+        border-color: rgba(34, 211, 238, 0.28) !important;
+        background: rgba(17, 27, 46, 0.65) !important;
+    }
 </style>
-                """,
-                unsafe_allow_html=True,
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _auth_db_path() -> Path:
+    return REPO_ROOT / "data" / "auth.db"
+
+
+def _auth_init_db() -> None:
+    db_path = _auth_db_path()
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(str(db_path)) as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL UNIQUE,
+                display_name TEXT,
+                password_salt TEXT NOT NULL,
+                password_hash TEXT NOT NULL,
+                recovery_question TEXT,
+                recovery_salt TEXT,
+                recovery_hash TEXT,
+                created_at TEXT NOT NULL
+            )
+            """
         )
+        conn.commit()
 
 
-def _get_secret_or_env(name: str) -> str:
-    try:
-        if name in st.secrets:
-            return str(st.secrets[name]).strip()
-    except Exception:
-        pass
-    return (os.getenv(name) or "").strip()
+def _norm_username(username: str) -> str:
+    return username.strip().lower()
 
 
-def _require_login() -> None:
-    if st.session_state.get("authenticated") is True:
-        return
+def _pbkdf2_hash(*, secret_value: str, salt_hex: str, iterations: int = 200_000) -> str:
+    salt = bytes.fromhex(salt_hex)
+    dk = hashlib.pbkdf2_hmac("sha256", secret_value.encode("utf-8"), salt, iterations)
+    return dk.hex()
 
-    expected_user = _get_secret_or_env("APP_USER") or "admin"
-    expected_password = _get_secret_or_env("APP_PASSWORD")
 
+def _hash_new_secret(*, secret_value: str) -> tuple[str, str]:
+    salt = secrets.token_bytes(16)
+    salt_hex = salt.hex()
+    hash_hex = _pbkdf2_hash(secret_value=secret_value, salt_hex=salt_hex)
+    return salt_hex, hash_hex
+
+
+def _verify_secret(*, secret_value: str, salt_hex: str, expected_hash_hex: str) -> bool:
+    candidate = _pbkdf2_hash(secret_value=secret_value, salt_hex=salt_hex)
+    return hmac.compare_digest(candidate, expected_hash_hex)
+
+
+def _auth_get_user(username: str) -> Optional[dict]:
+    u = _norm_username(username)
+    with sqlite3.connect(str(_auth_db_path())) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT * FROM users WHERE username = ?",
+            (u,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def _auth_user_count() -> int:
+    with sqlite3.connect(str(_auth_db_path())) as conn:
+        row = conn.execute("SELECT COUNT(1) FROM users").fetchone()
+        return int(row[0] or 0)
+
+
+def _auth_create_user(
+    *,
+    username: str,
+    display_name: str,
+    password: str,
+    recovery_question: str,
+    recovery_answer: str,
+) -> None:
+    u = _norm_username(username)
+    if not u:
+        raise ValueError("Username is required")
+    if len(u) < 3:
+        raise ValueError("Username must be at least 3 characters")
+    if len(password) < 8:
+        raise ValueError("Password must be at least 8 characters")
+
+    pw_salt, pw_hash = _hash_new_secret(secret_value=password)
+    rec_salt, rec_hash = _hash_new_secret(secret_value=recovery_answer.strip().lower())
+    created_at = datetime.now(timezone.utc).isoformat()
+
+    with sqlite3.connect(str(_auth_db_path())) as conn:
+        conn.execute(
+            """
+            INSERT INTO users (username, display_name, password_salt, password_hash, recovery_question, recovery_salt, recovery_hash, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                u,
+                display_name.strip() or None,
+                pw_salt,
+                pw_hash,
+                recovery_question.strip() or None,
+                rec_salt,
+                rec_hash,
+                created_at,
+            ),
+        )
+        conn.commit()
+
+
+def _auth_update_password(*, username: str, new_password: str) -> None:
+    if len(new_password) < 8:
+        raise ValueError("Password must be at least 8 characters")
+    u = _norm_username(username)
+    pw_salt, pw_hash = _hash_new_secret(secret_value=new_password)
+    with sqlite3.connect(str(_auth_db_path())) as conn:
+        conn.execute(
+            "UPDATE users SET password_salt = ?, password_hash = ? WHERE username = ?",
+            (pw_salt, pw_hash, u),
+        )
+        conn.commit()
+
+
+def _auth_attempt_login(*, username: str, password: str) -> bool:
+    user = _auth_get_user(username)
+    if not user:
+        return False
+    return _verify_secret(secret_value=password, salt_hex=user["password_salt"], expected_hash_hex=user["password_hash"])
+
+
+def _auth_attempt_recovery(*, username: str, recovery_answer: str) -> bool:
+    user = _auth_get_user(username)
+    if not user:
+        return False
+    if not user.get("recovery_salt") or not user.get("recovery_hash"):
+        return False
+    return _verify_secret(
+        secret_value=recovery_answer.strip().lower(),
+        salt_hex=user["recovery_salt"],
+        expected_hash_hex=user["recovery_hash"],
+    )
+
+
+def _render_auth_page() -> None:
     st.markdown(
         """
 <div class="loginWrap">
   <div class="loginCard">
-    <h2 class="loginTitle">Secure Access Required</h2>
-    <p class="loginHint">Sign in to access the B.Tech Multimodal Study Assistant.</p>
+    <h2 class="loginTitle">Welcome</h2>
+    <p class="loginHint">Login, or create an account to access the Study Assistant.</p>
   </div>
 </div>
         """,
         unsafe_allow_html=True,
     )
 
-    if not expected_password:
-        st.error(
-            "Login is enabled but APP_PASSWORD is not set. "
-            "On Streamlit Cloud: App → Settings → Secrets → add APP_PASSWORD (and optional APP_USER)."
-        )
-        st.stop()
+    c_left, c_mid, c_right = st.columns([1, 2, 1])
+    with c_mid:
+        tab_login, tab_register, tab_forgot = st.tabs(["Login", "Register", "Forgot password"])
 
-    with st.form("login_form", clear_on_submit=False):
-        username = st.text_input(
-            "Username",
-            value=str(st.session_state.get("login_username", "")),
-            placeholder=expected_user,
-        )
-        password = st.text_input("Password", type="password")
-        submitted = st.form_submit_button("Login")
+        with tab_login:
+            with st.form("auth_login_form", clear_on_submit=False):
+                username = st.text_input("Username", value=str(st.session_state.get("login_username", "")))
+                password = st.text_input("Password", type="password")
+                submitted = st.form_submit_button("Login")
 
-    if submitted:
-        if username.strip() == expected_user and password == expected_password:
+            if submitted:
+                try:
+                    ok = _auth_attempt_login(username=username, password=password)
+                except Exception:
+                    ok = False
+
+                if ok:
+                    st.session_state.authenticated = True
+                    st.session_state.login_username = _norm_username(username)
+                    user = _auth_get_user(username)
+                    st.session_state.display_name = (user or {}).get("display_name") or _norm_username(username)
+                    st.rerun()
+                else:
+                    st.error("Invalid username or password.")
+
+            st.caption("Tip: If you are new, open the Register tab.")
+
+        with tab_register:
+            with st.form("auth_register_form", clear_on_submit=False):
+                username = st.text_input("Choose a username")
+                display_name = st.text_input("Display name (optional)")
+                password = st.text_input("Create password", type="password")
+                password2 = st.text_input("Confirm password", type="password")
+                recovery_question = st.text_input("Recovery question (e.g., Your first school?)")
+                recovery_answer = st.text_input("Recovery answer", type="password")
+                submitted = st.form_submit_button("Create account")
+
+            if submitted:
+                if password != password2:
+                    st.error("Passwords do not match.")
+                elif not recovery_question.strip() or not recovery_answer.strip():
+                    st.error("Recovery question and answer are required (used for Forgot password).")
+                else:
+                    try:
+                        _auth_create_user(
+                            username=username,
+                            display_name=display_name,
+                            password=password,
+                            recovery_question=recovery_question,
+                            recovery_answer=recovery_answer,
+                        )
+                        st.success("Account created. You can login now.")
+                    except sqlite3.IntegrityError:
+                        st.error("That username is already taken.")
+                    except Exception as e:
+                        st.error(str(e))
+
+        with tab_forgot:
+            username = st.text_input("Username", key="forgot_username")
+            user = None
+            if username.strip():
+                try:
+                    user = _auth_get_user(username)
+                except Exception:
+                    user = None
+
+            if user and user.get("recovery_question"):
+                st.info(f"Recovery question: {user['recovery_question']}")
+                with st.form("auth_forgot_form", clear_on_submit=False):
+                    recovery_answer = st.text_input("Recovery answer", type="password")
+                    new_password = st.text_input("New password", type="password")
+                    new_password2 = st.text_input("Confirm new password", type="password")
+                    submitted = st.form_submit_button("Reset password")
+
+                if submitted:
+                    if new_password != new_password2:
+                        st.error("Passwords do not match.")
+                    else:
+                        try:
+                            ok = _auth_attempt_recovery(username=username, recovery_answer=recovery_answer)
+                        except Exception:
+                            ok = False
+                        if not ok:
+                            st.error("Recovery answer is incorrect.")
+                        else:
+                            try:
+                                _auth_update_password(username=username, new_password=new_password)
+                                st.success("Password updated. You can login now.")
+                            except Exception as e:
+                                st.error(str(e))
+            else:
+                st.caption("Enter a valid username to see the recovery question.")
+
+        st.divider()
+        if st.button("Continue as guest"):
             st.session_state.authenticated = True
-            st.session_state.login_username = username.strip()
+            st.session_state.login_username = "guest"
+            st.session_state.display_name = "Guest"
             st.rerun()
-        else:
-            st.error("Invalid username or password.")
 
+
+def _require_auth() -> None:
+    if st.session_state.get("authenticated") is True:
+        return
+
+    try:
+        _auth_init_db()
+    except Exception:
+        st.error("Auth storage is unavailable right now. Continuing as guest.")
+        st.session_state.authenticated = True
+        st.session_state.login_username = "guest"
+        st.session_state.display_name = "Guest"
+        return
+
+    _render_auth_page()
     st.stop()
 
 
@@ -428,7 +658,7 @@ def ingest_image(*, settings, subject: str, unit: Optional[str], topic: Optional
 st.set_page_config(page_title="B.Tech Multimodal Study RAG Assistant", layout="wide")
 _inject_tech_theme()
 
-_require_login()
+_require_auth()
 
 settings = _ensure_ready()
 
@@ -466,7 +696,12 @@ with st.sidebar:
         if st.button("Logout"):
             st.session_state.authenticated = False
             st.session_state.pop("history", None)
+            st.session_state.pop("display_name", None)
             st.rerun()
+
+    who = st.session_state.get("display_name") or st.session_state.get("login_username")
+    if who:
+        st.caption(f"Signed in as: {who}")
 
     with st.form("context_form", clear_on_submit=False):
         subject = st.text_input("Subject", value=st.session_state.get("subject", "Electrical Networks"))

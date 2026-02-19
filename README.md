@@ -52,14 +52,19 @@ This repo includes a Streamlit app entrypoint at `streamlit_app.py` that runs wi
 ```toml
 GEMINI_API_KEY = "<your key>"
 
-# Login gate (required)
-APP_PASSWORD = "<set a password>"
-# Optional (defaults to "admin")
-# APP_USER = "admin"
-
 # Optional
 # GEMINI_MODEL = "gemini-1.5-flash"
 # GEMINI_EMBEDDING_MODEL = "embedding-001"
 ```
+
+### Login / Register / Forgot password
+
+The Streamlit app includes a built-in authentication screen (Login / Register / Forgot password).
+
+- New users can **Register** (credentials are stored in a local SQLite DB at `data/auth.db` with hashed passwords).
+- Forgot password works via the recovery question/answer you set during registration.
+- There is also a **Continue as guest** option.
+
+Note: Streamlit Community Cloud does not guarantee long-term persistence of local files across rebuilds/restarts. If you need production-grade auth and persistence, use an external auth provider + database.
 
 4. Deploy. The app will build using the root `requirements.txt`.
