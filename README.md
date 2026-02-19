@@ -51,6 +51,12 @@ This repo includes a Streamlit app entrypoint at `streamlit_app.py` that runs wi
 
 ```toml
 GEMINI_API_KEY = "<your key>"
+
+# Login gate (required)
+APP_PASSWORD = "<set a password>"
+# Optional (defaults to "admin")
+# APP_USER = "admin"
+
 # Optional
 # GEMINI_MODEL = "gemini-1.5-flash"
 # GEMINI_EMBEDDING_MODEL = "embedding-001"

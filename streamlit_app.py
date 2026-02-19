@@ -69,6 +69,16 @@ def _inject_tech_theme() -> None:
         to { transform: translate3d(-48px, -48px, 0); }
     }
 
+    @keyframes fadeUp {
+        from { opacity: 0; transform: translate3d(0, 10px, 0); }
+        to { opacity: 1; transform: translate3d(0, 0, 0); }
+    }
+    @keyframes glowPulse {
+        0% { box-shadow: 0 0 0 1px rgba(34, 211, 238, 0.08), 0 22px 60px rgba(0, 0, 0, 0.45); }
+        50% { box-shadow: 0 0 0 1px rgba(34, 211, 238, 0.18), 0 28px 80px rgba(0, 0, 0, 0.52); }
+        100% { box-shadow: 0 0 0 1px rgba(34, 211, 238, 0.08), 0 22px 60px rgba(0, 0, 0, 0.45); }
+    }
+
     /* Glassy blocks */
     div[data-testid="stVerticalBlock"],
     section[data-testid="stSidebar"] > div {
@@ -127,6 +137,7 @@ def _inject_tech_theme() -> None:
         background: var(--panel);
         border-radius: 16px;
         padding: 0.25rem 0.25rem;
+        animation: fadeUp 220ms ease-out;
     }
     div[data-testid="stChatMessage"] a { color: var(--accent) !important; }
 
@@ -154,6 +165,7 @@ def _inject_tech_theme() -> None:
         border-radius: 18px;
         padding: 18px 18px 12px 18px;
         box-shadow: 0 24px 70px rgba(0, 0, 0, 0.45);
+        animation: fadeUp 650ms ease-out;
     }
     .heroTitle {
         margin: 0;
@@ -178,10 +190,103 @@ def _inject_tech_theme() -> None:
         color: rgba(229, 231, 235, 0.86);
         font-size: 0.85rem;
     }
+
+    .loginWrap {
+        max-width: 560px;
+        margin: 0 auto;
+        padding-top: 1.5rem;
+        animation: fadeUp 650ms ease-out;
+    }
+    .loginCard {
+        position: relative;
+        border: 1px solid rgba(34, 211, 238, 0.18);
+        background: linear-gradient(180deg, rgba(17, 27, 46, 0.70), rgba(11, 18, 32, 0.30));
+        border-radius: 18px;
+        padding: 18px;
+        box-shadow: 0 0 0 1px rgba(34, 211, 238, 0.08), 0 22px 60px rgba(0, 0, 0, 0.45);
+        animation: glowPulse 3.2s ease-in-out infinite;
+        overflow: hidden;
+    }
+    .loginCard:before {
+        content: "";
+        position: absolute;
+        inset: -2px;
+        background: radial-gradient(900px 160px at 10% 0%, rgba(34, 211, 238, 0.22), transparent 55%),
+                    radial-gradient(900px 160px at 90% 0%, rgba(167, 139, 250, 0.20), transparent 55%);
+        opacity: 0.8;
+        pointer-events: none;
+    }
+    .loginTitle {
+        margin: 0;
+        font-size: 1.25rem;
+        background: linear-gradient(90deg, var(--accent), var(--accent2));
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+    }
+    .loginHint {
+        margin: 0.35rem 0 0 0;
+        color: var(--muted);
+    }
 </style>
                 """,
                 unsafe_allow_html=True,
         )
+
+
+def _get_secret_or_env(name: str) -> str:
+    try:
+        if name in st.secrets:
+            return str(st.secrets[name]).strip()
+    except Exception:
+        pass
+    return (os.getenv(name) or "").strip()
+
+
+def _require_login() -> None:
+    if st.session_state.get("authenticated") is True:
+        return
+
+    expected_user = _get_secret_or_env("APP_USER") or "admin"
+    expected_password = _get_secret_or_env("APP_PASSWORD")
+
+    st.markdown(
+        """
+<div class="loginWrap">
+  <div class="loginCard">
+    <h2 class="loginTitle">Secure Access Required</h2>
+    <p class="loginHint">Sign in to access the B.Tech Multimodal Study Assistant.</p>
+  </div>
+</div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    if not expected_password:
+        st.error(
+            "Login is enabled but APP_PASSWORD is not set. "
+            "On Streamlit Cloud: App → Settings → Secrets → add APP_PASSWORD (and optional APP_USER)."
+        )
+        st.stop()
+
+    with st.form("login_form", clear_on_submit=False):
+        username = st.text_input(
+            "Username",
+            value=str(st.session_state.get("login_username", "")),
+            placeholder=expected_user,
+        )
+        password = st.text_input("Password", type="password")
+        submitted = st.form_submit_button("Login")
+
+    if submitted:
+        if username.strip() == expected_user and password == expected_password:
+            st.session_state.authenticated = True
+            st.session_state.login_username = username.strip()
+            st.rerun()
+        else:
+            st.error("Invalid username or password.")
+
+    st.stop()
 
 
 def _get_api_key() -> str:
@@ -321,10 +426,11 @@ def ingest_image(*, settings, subject: str, unit: Optional[str], topic: Optional
 
 
 st.set_page_config(page_title="B.Tech Multimodal Study RAG Assistant", layout="wide")
+_inject_tech_theme()
+
+_require_login()
 
 settings = _ensure_ready()
-
-_inject_tech_theme()
 
 st.markdown(
         """
@@ -355,6 +461,12 @@ if "last_ingest" not in st.session_state:
 
 with st.sidebar:
     st.header("Workspace")
+
+    if st.session_state.get("authenticated") is True:
+        if st.button("Logout"):
+            st.session_state.authenticated = False
+            st.session_state.pop("history", None)
+            st.rerun()
 
     with st.form("context_form", clear_on_submit=False):
         subject = st.text_input("Subject", value=st.session_state.get("subject", "Electrical Networks"))
