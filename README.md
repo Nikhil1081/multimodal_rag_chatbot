@@ -37,3 +37,23 @@ npm run dev
 ```
 
 Set `VITE_BACKEND_URL=http://localhost:8000` in `frontend/.env` (or use `http://localhost:8001` if you started the backend on 8001).
+
+## Deploy on Streamlit Community Cloud
+
+This repo includes a Streamlit app entrypoint at `streamlit_app.py` that runs without FastAPI/React.
+
+1. Push to GitHub (done)
+2. Go to Streamlit Community Cloud and create a new app
+	- **Repository**: your repo
+	- **Branch**: `main`
+	- **Main file path**: `streamlit_app.py`
+3. Add Secrets (App → Settings → Secrets):
+
+```toml
+GEMINI_API_KEY = "<your key>"
+# Optional
+# GEMINI_MODEL = "gemini-1.5-flash"
+# GEMINI_EMBEDDING_MODEL = "embedding-001"
+```
+
+4. Deploy. The app will build using the root `requirements.txt`.
